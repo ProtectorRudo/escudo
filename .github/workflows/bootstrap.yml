@@ -1,3 +1,4 @@
+# Escudo CI branch trigger
 name: Bootstrap and validate Escudo
 
 on:
