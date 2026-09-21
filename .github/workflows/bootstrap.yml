@@ -1,4 +1,4 @@
-name: Bootstrap Escudo source
+name: Bootstrap and validate Escudo
 
 on:
   push:
@@ -6,12 +6,14 @@ on:
       - "bootstrap/**"
       - ".github/workflows/bootstrap.yml"
       - "bootstrap_payload.b64"
+  pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
-  expand-source:
+  validate-source:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -25,25 +27,63 @@ jobs:
           cat bootstrap/payload.part* > /tmp/escudo-source.tar.gz.b64
           base64 --decode /tmp/escudo-source.tar.gz.b64 > /tmp/escudo-source.tar.gz
           echo "8a52c949bf82d8e927e23d2cb483d6bd2f794356e292c3a66f951981ed7d2799  /tmp/escudo-source.tar.gz" | sha256sum --check
-
-      - name: Expand Escudo project
-        shell: bash
-        run: |
-          set -euo pipefail
           mkdir -p /tmp/escudo-source
           tar -xzf /tmp/escudo-source.tar.gz -C /tmp/escudo-source
-          find . -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
-          cp -a /tmp/escudo-source/. .
 
-      - name: Commit expanded project
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK 35
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-35" "build-tools;34.0.0" "platform-tools"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Core self-test
+        working-directory: /tmp/escudo-source
+        run: ./tools/core-self-test.sh
+
+      - name: Security regression check
+        working-directory: /tmp/escudo-source
+        run: ./tools/security-regression-check.sh
+
+      - name: Unit tests
+        working-directory: /tmp/escudo-source
+        run: gradle :app:testDebugUnitTest --stacktrace
+
+      - name: Android lint
+        working-directory: /tmp/escudo-source
+        run: gradle :app:lintDebug :demo-target:lintDebug --stacktrace
+
+      - name: Build APKs
+        working-directory: /tmp/escudo-source
+        run: gradle :app:assembleDebug :demo-target:assembleDebug --stacktrace
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: escudo-v0.9-debug-apks
+          path: |
+            /tmp/escudo-source/app/build/outputs/apk/debug/*.apk
+            /tmp/escudo-source/demo-target/build/outputs/apk/debug/*.apk
+
+      - name: Expand project onto main
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         shell: bash
         run: |
           set -euo pipefail
+          find . -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
+          cp -a /tmp/escudo-source/. .
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
           if git diff --cached --quiet; then
-            echo "Nothing to commit"
             exit 0
           fi
           git commit -m "Import Escudo Android MVP v0.9"
