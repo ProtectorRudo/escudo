@@ -1,44 +1,40 @@
-# Escudo v0.4 architecture
+# Escudo v0.11 — arquitectura consumer-first
 
-## Closed state
+## Problema
 
-For every selected package in managed mode:
+Una app Android común no puede ocultar/suspender otras apps con garantías fuertes. Device Owner/Profile Owner sí puede, pero su provisioning es una experiencia empresarial y no es aceptable como onboarding masivo.
 
-`hidden = true` + `suspended = true` + `uninstallBlocked = true`
+## Estrategias
 
-Escudo itself additionally requests `userControlDisabled` on Android 11+ so ordinary Settings controls cannot trivially force-stop or clear the DPC.
+### 1. Android 15+ — Private Space
 
-## Open-session state
+Ruta de consumo recomendada:
 
-Only the requested package is released:
+- Perfil separado propiedad de Android.
+- Puede usar bloqueo distinto al del teléfono.
+- Al bloquearse, las apps del espacio se detienen y se ocultan de launcher/Recientes/notificaciones/otras apps.
+- Las apps se instalan como copias nuevas; sus datos no se mueven desde el perfil principal.
+- Escudo no asume ROLE_HOME, por lo que no enumera/controla el perfil privado programáticamente.
 
-`hidden = false` + `suspended = false` + `uninstallBlocked = true`
+### 2. Managed DPC — laboratorio
 
-Before that release, Escudo attempts to close all selected packages so there is never an intentional multi-app open session.
+El motor existente de hidden+suspended+uninstallBlocked, bridge cross-profile y session guard se mantiene para pruebas técnicas. No se ofrece como onboarding de usuarios comunes.
 
-## Session guards
+### 3. Android <15 / Private Space bloqueado
 
-Two independent mechanisms remember the temporary release:
+No hay una ruta universal de aislamiento fuerte accesible a una app común. Escudo muestra la limitación y no degrada silenciosamente a un overlay AppLock.
 
-1. `VaultGuardService`: foreground service, screen-off receiver, in-process 120 s timer and manual close action.
-2. `SessionExpiryScheduler` + `SessionExpiryReceiver`: an OS AlarmManager fail-safe that survives Escudo process death.
+## Variantes de build
 
-The stored `activeSessionPackage` is security state, not cosmetic state. It is cleared only after Android confirms the package is protected again.
+- `consumer`: superficie mínima, sin administración empresarial.
+- `lab`: DPC y herramientas de investigación.
 
-## Authentication
+## Caminos descartados como base
 
-Biometric access uses `BIOMETRIC_STRONG` without device-credential fallback.
+- Work Profile para consumidor.
+- Accessibility/overlay AppLock presentado como aislamiento fuerte.
+- Convertir Escudo en launcher sólo para obtener ACCESS_HIDDEN_PROFILES/LOCK_APPS.
 
-PIN access uses:
+## Futuro
 
-`PIN -> PBKDF2-HMAC-SHA256(salt, 120k iterations) -> HMAC-SHA256(Android Keystore secret) -> stored verifier`
-
-The Keystore secret is non-exportable. v0.3 PBKDF2-only records are migrated after one successful legacy PIN verification.
-
-## No network trust
-
-The MVP has no `INTERNET` permission. Vault decisions, PIN verification, app policy state and relocking are local.
-
-## Deployment boundary
-
-`DevicePolicyManager` policy is scoped to the user/profile in which Escudo is the Device Owner/Profile Owner. A Profile Owner cannot magically hide the user's personal-profile copy of Mercado Pago; the protected copy must live inside the managed profile. A Device Owner controls a fully managed device and therefore has a much heavier provisioning model.
+Android está incorporando App Lock de sistema, pero sus APIs de control actuales están ligadas al rol HOME/launcher. Escudo seguirá observando APIs públicas que permitan solicitar protección nativa sin reemplazar el launcher.
