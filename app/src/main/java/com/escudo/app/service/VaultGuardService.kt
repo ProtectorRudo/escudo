@@ -1,5 +1,6 @@
 package com.escudo.app.service
 
+import android.annotation.SuppressLint
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -18,6 +19,7 @@ import com.escudo.app.R
 import com.escudo.app.data.AppPreferences
 import com.escudo.app.policy.PolicyController
 
+@SuppressLint("ForegroundServiceType")
 class VaultGuardService : Service() {
     private val handler = Handler(Looper.getMainLooper())
     private lateinit var prefs: AppPreferences
