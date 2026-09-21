@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">Escudo</string>
+    <string name="device_admin_description">Protege aplicaciones seleccionadas cuando Escudo tiene control administrado del dispositivo.</string>
+</resources>
