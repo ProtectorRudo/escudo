@@ -36,6 +36,9 @@ import com.escudo.app.clone.ICloneBridge
 import com.escudo.app.clone.RemovePersonalCopyActivity
 import com.escudo.app.clone.PersonalCopyAuditActivity
 import com.escudo.app.policy.PolicyController
+import com.escudo.app.policy.ConsumerProtectionKind
+import com.escudo.app.policy.ConsumerProtectionPlan
+import com.escudo.app.policy.ConsumerProtectionController
 import com.escudo.app.policy.ProvisioningController
 import com.escudo.app.security.BiometricGate
 import com.escudo.app.security.PinVerification
@@ -145,7 +148,7 @@ class MainActivity : FragmentActivity() {
                     EscudoRoot(
                         biometric = biometric,
                         launchProtected = ::launchProtected,
-                        startSecureProfileProvisioning = ::startSecureProfileProvisioning,
+                        openConsumerSecuritySettings = ::openConsumerSecuritySettings,
                         cloneFromPersonal = ::cloneFromPersonal,
                         removePersonalCopy = ::removePersonalCopy,
                         auditPersonalCopies = { auditPersonalCopies(force = true) },
@@ -160,12 +163,14 @@ class MainActivity : FragmentActivity() {
         super.onResume()
         // Si volvimos desde una app protegida, cerramos cualquier sesión externa.
         // También limpia el candado anti doble-tap usado durante el handoff.
-        val failures = PolicyController(this).lockAllSelected()
-        if (failures.isEmpty()) {
-            stopService(Intent(this, VaultGuardService::class.java))
+        if (escudoViewModel.managedControl) {
+            val failures = PolicyController(this).lockAllSelected()
+            if (failures.isEmpty()) {
+                stopService(Intent(this, VaultGuardService::class.java))
+            }
+            auditPersonalCopies()
         }
         launchInFlight.set(false)
-        auditPersonalCopies()
     }
 
     private fun auditPersonalCopies(force: Boolean = false) {
@@ -191,6 +196,15 @@ class MainActivity : FragmentActivity() {
         }
     }
 
+    private fun openConsumerSecuritySettings(onError: (String) -> Unit) {
+        runCatching {
+            startActivity(ConsumerProtectionController(this).securityAndPrivacySettingsIntent())
+        }.onFailure {
+            onError(it.message ?: "No pudimos abrir Seguridad y privacidad")
+        }
+    }
+
+    @Suppress("unused")
     private fun startSecureProfileProvisioning(onError: (String) -> Unit) {
         runCatching {
             val provisioning = ProvisioningController(this)
@@ -261,14 +275,14 @@ class MainActivity : FragmentActivity() {
     }
 }
 
-private enum class Screen { LOCKED, VAULT, MANAGE, SETUP_ENVIRONMENT, SETUP_PIN, SETUP_APPS }
+private enum class Screen { LOCKED, VAULT, MANAGE, SETUP_ENVIRONMENT, NATIVE_VERIFY, SETUP_PIN, SETUP_APPS }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun EscudoRoot(
     biometric: BiometricGate,
     launchProtected: (String, (String) -> Unit) -> Unit,
-    startSecureProfileProvisioning: ((String) -> Unit) -> Unit,
+    openConsumerSecuritySettings: ((String) -> Unit) -> Unit,
     cloneFromPersonal: ((String) -> Unit) -> Unit,
     removePersonalCopy: (String, (String) -> Unit) -> Unit,
     auditPersonalCopies: () -> Unit,
@@ -286,7 +300,7 @@ private fun EscudoRoot(
     var screen by remember {
         mutableStateOf(
             when {
-                vm.onboardingDone -> Screen.LOCKED
+                vm.managedControl && vm.onboardingDone -> Screen.LOCKED
                 vm.managedControl -> Screen.SETUP_PIN
                 else -> Screen.SETUP_ENVIRONMENT
             }
@@ -345,10 +359,17 @@ private fun EscudoRoot(
         ) {
             when (screen) {
                 Screen.SETUP_ENVIRONMENT -> SetupEnvironmentScreen(
-                    canProvision = vm.canProvisionSecureProfile,
-                    onCreateSecureProfile = {
-                        startSecureProfileProvisioning { message = it }
-                    }
+                    plan = vm.consumerProtectionPlan,
+                    onOpenSecuritySettings = {
+                        openConsumerSecuritySettings { message = it }
+                    },
+                    onConfiguredPrivateSpace = { screen = Screen.NATIVE_VERIFY }
+                )
+                Screen.NATIVE_VERIFY -> NativePrivateSpaceVerificationScreen(
+                    onOpenSecuritySettings = {
+                        openConsumerSecuritySettings { message = it }
+                    },
+                    onBack = { screen = Screen.SETUP_ENVIRONMENT }
                 )
                 Screen.SETUP_PIN -> SetupPinScreen(
                     onPinReady = { pin ->
@@ -420,53 +441,107 @@ private fun EscudoRoot(
 
 @Composable
 private fun SetupEnvironmentScreen(
-    canProvision: Boolean,
-    onCreateSecureProfile: () -> Unit
+    plan: ConsumerProtectionPlan,
+    onOpenSecuritySettings: () -> Unit,
+    onConfiguredPrivateSpace: () -> Unit
 ) {
     Column(
         modifier = Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(18.dp)
     ) {
         Text(
-            "Primero creamos la bóveda segura",
+            "Escudo sin perfil de empresa",
             style = MaterialTheme.typography.headlineSmall,
             fontWeight = FontWeight.SemiBold
         )
-        Text(
-            "Escudo no va a fingir que protege apps desde un Android común. " +
-                "Para ocultarlas y bloquearlas de verdad necesita un perfil aislado administrado por Android."
-        )
-        Card(modifier = Modifier.fillMaxWidth()) {
-            Column(
-                modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Text("Configuración única", fontWeight = FontWeight.SemiBold)
-                Text("1. Android crea un perfil separado llamado Escudo.")
-                Text("2. Escudo deja un único icono visible en tu teléfono.")
-                Text("3. Ese icono entra automáticamente a la bóveda aislada cuando ya está lista.")
-                Text("4. Las apps sensibles se instalan/clonan allí y Escudo puede ocultarlas de verdad.")
+
+        when (plan.kind) {
+            ConsumerProtectionKind.PRIVATE_SPACE -> {
+                Text(
+                    "Tu teléfono tiene la ruta que queremos para usuarios normales: ${plan.title}. " +
+                        "Escudo ya no va a intentar crear un perfil de trabajo administrado."
+                )
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text("Configuración única", fontWeight = FontWeight.SemiBold)
+                        Text("1. Abrí Seguridad y privacidad → Espacio privado.")
+                        Text("2. Configurá un bloqueo distinto al del teléfono.")
+                        Text("3. Instalá Demo Target dentro del Espacio privado.")
+                        Text("4. Quitá la copia de Demo Target del espacio principal.")
+                        Text("5. Configurá el bloqueo automático al bloquear el dispositivo.")
+                    }
+                }
+                Button(onClick = onOpenSecuritySettings, modifier = Modifier.fillMaxWidth()) {
+                    Text("Abrir Seguridad y privacidad")
+                }
+                OutlinedButton(onClick = onConfiguredPrivateSpace, modifier = Modifier.fillMaxWidth()) {
+                    Text("Ya configuré el Espacio privado")
+                }
+                Text(
+                    "Android debe confirmar que el Espacio privado está disponible en este modelo. " +
+                        "Escudo no pide permisos de administrador ni cambia tu launcher.",
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+
+            ConsumerProtectionKind.MANAGED_LAB -> {
+                Text(plan.detail)
+                Text(
+                    "Este modo existe sólo para laboratorio. El flujo de consumo no va a pedir Device Owner ni Profile Owner.",
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+
+            ConsumerProtectionKind.NO_STRONG_STANDARD_PATH -> {
+                Text(plan.title, fontWeight = FontWeight.SemiBold)
+                Text(plan.detail)
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Qué hace Escudo acá", fontWeight = FontWeight.SemiBold)
+                        Text("• No activa un AppLock cosmético y lo llama ‘protección fuerte’.")
+                        Text("• No crea perfiles empresariales en tu teléfono personal.")
+                        Text("• Esta versión queda en modo diagnóstico mientras evaluamos la protección nativa del fabricante.")
+                    }
+                }
+                OutlinedButton(onClick = onOpenSecuritySettings, modifier = Modifier.fillMaxWidth()) {
+                    Text("Abrir Seguridad")
+                }
             }
         }
-        Button(
-            onClick = onCreateSecureProfile,
-            enabled = canProvision,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text("Crear bóveda segura")
+    }
+}
+
+@Composable
+private fun NativePrivateSpaceVerificationScreen(
+    onOpenSecuritySettings: () -> Unit,
+    onBack: () -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        Text(
+            "Probemos la protección nativa",
+            style = MaterialTheme.typography.headlineSmall,
+            fontWeight = FontWeight.Bold
+        )
+        Text(
+            "Escudo todavía no puede inspeccionar el Espacio privado desde una app común sin convertirse en tu launcher principal. " +
+                "Por eso esta prueba es explícita y no muestra un verde falso."
+        )
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Chequeo rápido", fontWeight = FontWeight.SemiBold)
+                Text("1. Bloqueá el Espacio privado.")
+                Text("2. Buscá Demo Target en Todas las apps: no debería aparecer fuera.")
+                Text("3. Revisá Recientes y notificaciones: su contenido debe quedar oculto mientras el espacio esté bloqueado.")
+                Text("4. Desbloqueá el Espacio privado con su bloqueo independiente y abrí Demo Target.")
+            }
         }
-        if (!canProvision) {
-            Text(
-                "Android no permite crear otro perfil administrado en este teléfono. " +
-                    "Puede existir ya un perfil de trabajo/administrado o el fabricante puede restringirlo.",
-                style = MaterialTheme.typography.bodySmall
-            )
-        } else {
-            Text(
-                "Después de aceptar el asistente de Android, volvé a tocar el mismo icono de Escudo. Te llevará automáticamente a la bóveda segura.",
-                style = MaterialTheme.typography.bodySmall
-            )
+        Button(onClick = onOpenSecuritySettings, modifier = Modifier.fillMaxWidth()) {
+            Text("Abrir configuración de seguridad")
         }
+        TextButton(onClick = onBack, modifier = Modifier.fillMaxWidth()) { Text("Volver") }
     }
 }
 
