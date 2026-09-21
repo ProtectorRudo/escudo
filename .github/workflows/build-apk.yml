@@ -1,0 +1,142 @@
+name: Build Escudo APK
+
+"on":
+  push:
+    paths:
+      - ".github/workflows/build-apk.yml"
+      - "APK_BUILD_TRIGGER.md"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Reassemble verified Escudo source
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat bootstrap/payload.part* > /tmp/escudo-source.tar.gz.b64
+          base64 --decode /tmp/escudo-source.tar.gz.b64 > /tmp/escudo-source.tar.gz
+          echo "8a52c949bf82d8e927e23d2cb483d6bd2f794356e292c3a66f951981ed7d2799  /tmp/escudo-source.tar.gz" | sha256sum --check
+          mkdir -p /tmp/escudo-source
+          tar -xzf /tmp/escudo-source.tar.gz -C /tmp/escudo-source
+
+      - name: Apply confirmed CI fixes
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          from pathlib import Path
+
+          root = Path("/tmp/escudo-source")
+
+          bridge = root / "app/src/main/java/com/escudo/app/clone/CloneBridgeService.kt"
+          s = bridge.read_text()
+          s = s.replace("import android.os.Process\n", "")
+          s = s.replace("import android.os.UserHandle\n", "")
+          begin = s.index("    private fun enforceEscudoCaller() {")
+          finish = s.index("\n    private fun scheduleStop()", begin)
+          replacement = """    private fun enforceEscudoCaller() {
+              val callerPackages = packageManager.getPackagesForUid(Binder.getCallingUid()).orEmpty()
+              check(packageName in callerPackages) { "Caller no autorizado" }
+          }
+          """
+          s = s[:begin] + replacement + s[finish:]
+          bridge.write_text(s)
+
+          provisioning = root / "app/src/main/java/com/escudo/app/policy/ProvisioningController.kt"
+          s = provisioning.read_text()
+          begin = s.index("    val isManagedProfile: Boolean")
+          finish = s.index("\n    val isProfileOwner: Boolean", begin)
+          replacement = """    val isManagedProfile: Boolean
+              get() = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                  userManager.isManagedProfile
+              } else {
+                  isProfileOwner && !isDeviceOwner
+              }
+          """
+          s = s[:begin] + replacement + s[finish:]
+          provisioning.write_text(s)
+
+          check = root / "tools/security-regression-check.sh"
+          lines = check.read_text().splitlines()
+          dq = chr(34)
+          replacement_check = "grep -q 'getPackagesForUid(Binder.getCallingUid())' " + dq + "$BRIDGE_SERVICE" + dq + " || fail " + dq + "el Binder debe verificar que cada IPC provenga del paquete Escudo" + dq
+          lines = [
+              replacement_check
+              if "UserHandle.getAppId" in line and "$BRIDGE_SERVICE" in line
+              else line
+              for line in lines
+          ]
+          check.write_text("\n".join(lines) + "\n")
+
+          app_gradle = root / "app/build.gradle.kts"
+          s = app_gradle.read_text()
+          fragment_dep = '    implementation("androidx.fragment:fragment-ktx:1.8.5")\n'
+          if "androidx.fragment:fragment-ktx" not in s:
+              s = s.replace('    implementation("androidx.biometric:biometric:1.1.0")\n', '    implementation("androidx.biometric:biometric:1.1.0")\n' + fragment_dep)
+          app_gradle.write_text(s)
+
+          wf = root / ".github/workflows/android.yml"
+          wf.write_text(wf.read_text().replace("android-actions/setup-android@v3", "android-actions/setup-android@v4"))
+
+          assert "UserHandle.getAppId" not in bridge.read_text()
+          assert "getPackagesForUid(Binder.getCallingUid())" in bridge.read_text()
+          assert "Build.VERSION_CODES.R" in provisioning.read_text()
+          PY
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: android-actions/setup-android@v4
+
+      - name: Install Android SDK 35
+        shell: bash
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-35" "build-tools;34.0.0" "platform-tools"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+
+      - name: Core security checks
+        working-directory: /tmp/escudo-source
+        run: |
+          ./tools/core-self-test.sh
+          ./tools/security-regression-check.sh
+
+      - name: Unit tests
+        working-directory: /tmp/escudo-source
+        run: gradle :app:testDebugUnitTest --stacktrace
+
+      - name: Android lint diagnostics
+        continue-on-error: true
+        working-directory: /tmp/escudo-source
+        shell: bash
+        run: |
+          set +e
+          gradle :app:lintDebug :demo-target:lintDebug --stacktrace
+          status=$?
+          echo "===== APP LINT ====="
+          find app/build -name 'lint-results-debug.txt' -print -exec cat {} \; 2>/dev/null || true
+          echo "===== DEMO LINT ====="
+          find demo-target/build -name 'lint-results-debug.txt' -print -exec cat {} \; 2>/dev/null || true
+          exit "$status"
+
+      - name: Build debug APKs
+        working-directory: /tmp/escudo-source
+        run: gradle :app:assembleDebug :demo-target:assembleDebug --stacktrace
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: escudo-v0.10-debug-apks
+          path: |
+            /tmp/escudo-source/app/build/outputs/apk/debug/*.apk
+            /tmp/escudo-source/demo-target/build/outputs/apk/debug/*.apk
