@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" tools:node="remove" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" tools:node="remove" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" tools:node="remove" />
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" tools:node="remove" />
+    <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" tools:node="remove" />
+
+    <queries tools:node="remove" />
+
+    <application>
+        <activity android:name=".clone.PersonalCopyAuditActivity" tools:node="remove" />
+        <activity android:name=".clone.RemovePersonalCopyActivity" tools:node="remove" />
+        <activity android:name=".clone.CloneSourceActivity" tools:node="remove" />
+        <activity android:name=".clone.CloneInstallResultActivity" tools:node="remove" />
+        <activity android:name=".policy.ProvisioningModeActivity" tools:node="remove" />
+        <receiver android:name=".policy.EscudoDeviceAdminReceiver" tools:node="remove" />
+        <receiver android:name=".policy.BootReceiver" tools:node="remove" />
+        <receiver android:name=".service.SessionExpiryReceiver" tools:node="remove" />
+        <service android:name=".clone.CloneBridgeService" tools:node="remove" />
+        <service android:name=".service.VaultGuardService" tools:node="remove" />
+    </application>
+</manifest>

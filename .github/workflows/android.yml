@@ -1,0 +1,82 @@
+name: Android CI
+
+"on":
+  push:
+    branches:
+      - main
+      - "codex/**"
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: android-actions/setup-android@v4
+
+      - name: Install Android SDK 35
+        shell: bash
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-35" "build-tools;34.0.0" "platform-tools"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+
+      - name: Security source regression checks
+        run: ./tools/security-regression-check.sh
+
+      - name: Unit tests
+        run: gradle :app:testConsumerDebugUnitTest :app:testLabDebugUnitTest --stacktrace
+
+      - name: Android lint
+        run: gradle :app:lintConsumerDebug :app:lintLabDebug :demo-target:lintDebug --stacktrace
+
+      - name: Build APKs
+        run: gradle :app:assembleConsumerDebug :app:assembleLabDebug :demo-target:assembleDebug --stacktrace
+
+      - name: Verify consumer merged manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          manifest="$(find app/build/intermediates/merged_manifests -path '*consumerDebug*' -name AndroidManifest.xml | head -n 1)"
+          test -n "$manifest"
+          echo "Checking $manifest"
+          forbidden=(
+            "android.permission.INTERNET"
+            "android.permission.REQUEST_INSTALL_PACKAGES"
+            "android.permission.REQUEST_DELETE_PACKAGES"
+            "android.permission.FOREGROUND_SERVICE_SPECIAL_USE"
+            "EscudoDeviceAdminReceiver"
+            "ProvisioningModeActivity"
+            "CloneBridgeService"
+            "VaultGuardService"
+            "BootReceiver"
+            "SessionExpiryReceiver"
+          )
+          for token in "${forbidden[@]}"; do
+            if grep -q "$token" "$manifest"; then
+              echo "Forbidden consumer manifest entry: $token" >&2
+              exit 1
+            fi
+          done
+          echo "Consumer manifest isolation: PASS"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: escudo-v0.11-apks
+          path: |
+            app/build/outputs/apk/consumer/debug/*.apk
+            app/build/outputs/apk/lab/debug/*.apk
+            demo-target/build/outputs/apk/debug/*.apk

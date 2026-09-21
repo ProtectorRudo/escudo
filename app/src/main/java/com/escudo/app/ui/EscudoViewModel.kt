@@ -6,6 +6,8 @@ import com.escudo.app.apps.AppRepository
 import com.escudo.app.apps.InstalledApp
 import com.escudo.app.data.AppPreferences
 import com.escudo.app.policy.PolicyController
+import com.escudo.app.policy.ConsumerProtectionController
+import com.escudo.app.policy.ConsumerProtectionPlan
 import com.escudo.app.policy.ProvisioningController
 import com.escudo.app.security.PinStore
 import com.escudo.app.security.PinVerification
@@ -19,6 +21,7 @@ class EscudoViewModel(application: Application) : AndroidViewModel(application) 
     private val apps = AppRepository(application)
     private val policy = PolicyController(application)
     private val provisioning = ProvisioningController(application)
+    private val consumerProtection = ConsumerProtectionController(application)
 
     private val _selected = MutableStateFlow(prefs.selectedPackages())
     val selected: StateFlow<Set<String>> = _selected.asStateFlow()
@@ -46,6 +49,7 @@ class EscudoViewModel(application: Application) : AndroidViewModel(application) 
     val controlLabel: String get() = policy.controlLabel
     val canProvisionSecureProfile: Boolean get() = provisioning.canProvisionManagedProfile
     val runningInsideSecureProfile: Boolean get() = provisioning.isManagedProfile && provisioning.isProfileOwner
+    val consumerProtectionPlan: ConsumerProtectionPlan get() = consumerProtection.plan
 
     init {
         if (policy.hasManagedControl) policy.hardenEscudo()
