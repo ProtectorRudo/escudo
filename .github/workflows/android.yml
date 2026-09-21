@@ -46,6 +46,33 @@ jobs:
       - name: Build APKs
         run: gradle :app:assembleConsumerDebug :app:assembleLabDebug :demo-target:assembleDebug --stacktrace
 
+      - name: Verify consumer merged manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          manifest="$(find app/build/intermediates/merged_manifests -path '*consumerDebug*' -name AndroidManifest.xml | head -n 1)"
+          test -n "$manifest"
+          echo "Checking $manifest"
+          forbidden=(
+            "android.permission.INTERNET"
+            "android.permission.REQUEST_INSTALL_PACKAGES"
+            "android.permission.REQUEST_DELETE_PACKAGES"
+            "android.permission.FOREGROUND_SERVICE_SPECIAL_USE"
+            "EscudoDeviceAdminReceiver"
+            "ProvisioningModeActivity"
+            "CloneBridgeService"
+            "VaultGuardService"
+            "BootReceiver"
+            "SessionExpiryReceiver"
+          )
+          for token in "${forbidden[@]}"; do
+            if grep -q "$token" "$manifest"; then
+              echo "Forbidden consumer manifest entry: $token" >&2
+              exit 1
+            fi
+          done
+          echo "Consumer manifest isolation: PASS"
+
       - uses: actions/upload-artifact@v4
         with:
           name: escudo-v0.11-apks
