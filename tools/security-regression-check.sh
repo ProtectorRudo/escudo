@@ -22,7 +22,22 @@ BRIDGE_SERVICE="$ROOT/app/src/main/java/com/escudo/app/clone/CloneBridgeService.
 BRIDGE_SECRET="$ROOT/app/src/main/java/com/escudo/app/clone/BridgeSecretStore.kt"
 AIDL="$ROOT/app/src/main/aidl/com/escudo/app/clone/ICloneBridge.aidl"
 
+CONSUMER="$ROOT/app/src/main/java/com/escudo/app/policy/ConsumerProtectionController.kt"
+CONSUMER_MANIFEST="$ROOT/app/src/consumer/AndroidManifest.xml"
+APP_GRADLE="$ROOT/app/build.gradle.kts"
+
 fail() { echo "SECURITY CHECK FAILED: $*" >&2; exit 1; }
+
+# Consumer-first invariants (v0.11)
+grep -q 'ConsumerProtectionKind.PRIVATE_SPACE' "$MAIN" || fail "la UI de consumo debe ofrecer Private Space"
+! grep -q 'Text("Crear bóveda segura")' "$MAIN" || fail "la UI normal no debe ofrecer provisioning empresarial"
+! grep -q 'startSecureProfileProvisioning = ::startSecureProfileProvisioning' "$MAIN" || fail "el onboarding normal no debe cablear Work Profile"
+grep -q 'DISALLOW_ADD_PRIVATE_PROFILE' "$CONSUMER" || fail "debe detectar si Android bloquea Private Space"
+grep -q 'Settings.ACTION_SECURITY_SETTINGS' "$CONSUMER" || fail "debe abrir la seguridad del sistema sin intents privados"
+grep -q 'flavorDimensions += "mode"' "$APP_GRADLE" || fail "consumer y lab deben ser variantes separadas"
+grep -q 'REQUEST_INSTALL_PACKAGES.*tools:node="remove"' "$CONSUMER_MANIFEST" || fail "el APK consumer no debe pedir instalar APKs"
+grep -q 'EscudoDeviceAdminReceiver.*tools:node="remove"' "$CONSUMER_MANIFEST" || fail "el APK consumer no debe exponer Device Admin"
+grep -q 'ProvisioningModeActivity.*tools:node="remove"' "$CONSUMER_MANIFEST" || fail "el APK consumer no debe exponer provisioning empresarial"
 
 ! grep -q 'android.permission.INTERNET' "$MANIFEST" || fail "Escudo no debe pedir INTERNET en el MVP"
 ! grep -q 'android.permission.POST_NOTIFICATIONS' "$MANIFEST" || fail "el onboarding no debe pedir notificaciones para poder iniciar el FGS"
@@ -47,8 +62,8 @@ grep -q 'AUTH_BIOMETRIC_STRONG' "$BIOMETRIC_KEY" || fail "la clave biométrica d
 grep -q 'BiometricPrompt.CryptoObject' "$BIOMETRIC_GATE" || fail "la huella debe autorizar una operación criptográfica real"
 ! grep -q 'DEVICE_CREDENTIAL' "$BIOMETRIC_GATE" || fail "Escudo no debe aceptar el PIN del teléfono como fallback biométrico"
 grep -q 'resetForCurrentEnrollment(appContext)' "$PIN_STORE" || fail "sólo el PIN propio de Escudo debe poder confiar un nuevo conjunto biométrico"
-grep -q 'ACTION_PROVISION_MANAGED_PROFILE' "$PROVISION" || fail "falta ruta de provisioning para teléfono personal"
-grep -q 'isProvisioningAllowed' "$PROVISION" || fail "Escudo debe verificar que Android permita crear el perfil"
+grep -q 'ACTION_PROVISION_MANAGED_PROFILE' "$PROVISION" || fail "el motor de laboratorio debe conservar provisioning administrado"
+grep -q 'isProvisioningAllowed' "$PROVISION" || fail "el laboratorio debe verificar que Android permita crear el perfil"
 grep -q 'PROVISIONING_MODE_MANAGED_PROFILE' "$PROVISION_MODE" || fail "el provisioning moderno debe elegir Managed Profile"
 grep -q 'android.permission.BIND_DEVICE_ADMIN' "$MANIFEST" || fail "las activities de provisioning deben quedar limitadas al sistema"
 grep -q 'PackageInstaller.SessionParams' "$CLONE_INSTALLER" || fail "falta instalador base+splits dentro del perfil"
