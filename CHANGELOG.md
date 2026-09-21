@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.11.0
+- Pivot consumer-first: Work Profile deja de ser el onboarding normal.
+- Android 15+ usa Private Space como ruta fuerte recomendada.
+- Nuevo ConsumerProtectionController.
+- La UI normal ya no muestra “Crear bóveda segura” ni lanza provisioning empresarial.
+- Se separan APKs `consumer` y `lab`.
+- El APK consumer elimina Device Admin, provisioning, bridge cross-profile y permisos de instalación/desinstalación de APKs.
+- Se conserva el motor DPC sólo como laboratorio.
+- Agrega verificación manual explícita sin badge verde falso.
+- Bump versionCode 11 / versionName 0.11.0.
 
 ## 0.8.0
 
