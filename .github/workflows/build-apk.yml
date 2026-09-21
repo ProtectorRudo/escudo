@@ -74,6 +74,13 @@ jobs:
           ]
           check.write_text("\n".join(lines) + "\n")
 
+          app_gradle = root / "app/build.gradle.kts"
+          s = app_gradle.read_text()
+          fragment_dep = '    implementation("androidx.fragment:fragment-ktx:1.8.5")\n'
+          if "androidx.fragment:fragment-ktx" not in s:
+              s = s.replace('    implementation("androidx.biometric:biometric:1.1.0")\n', '    implementation("androidx.biometric:biometric:1.1.0")\n' + fragment_dep)
+          app_gradle.write_text(s)
+
           wf = root / ".github/workflows/android.yml"
           wf.write_text(wf.read_text().replace("android-actions/setup-android@v3", "android-actions/setup-android@v4"))
 
@@ -112,7 +119,16 @@ jobs:
       - name: Android lint diagnostics
         continue-on-error: true
         working-directory: /tmp/escudo-source
-        run: gradle :app:lintDebug :demo-target:lintDebug --stacktrace
+        shell: bash
+        run: |
+          set +e
+          gradle :app:lintDebug :demo-target:lintDebug --stacktrace
+          status=$?
+          echo "===== APP LINT ====="
+          find app/build -name 'lint-results-debug.txt' -print -exec cat {} \; 2>/dev/null || true
+          echo "===== DEMO LINT ====="
+          find demo-target/build -name 'lint-results-debug.txt' -print -exec cat {} \; 2>/dev/null || true
+          exit "$status"
 
       - name: Build debug APKs
         working-directory: /tmp/escudo-source
