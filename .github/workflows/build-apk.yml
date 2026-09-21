@@ -31,50 +31,55 @@ jobs:
           set -euo pipefail
           python3 <<'PY'
           from pathlib import Path
+
           root = Path("/tmp/escudo-source")
 
           bridge = root / "app/src/main/java/com/escudo/app/clone/CloneBridgeService.kt"
           s = bridge.read_text()
           s = s.replace("import android.os.Process\n", "")
           s = s.replace("import android.os.UserHandle\n", "")
-          old = '''    private fun enforceEscudoCaller() {
-              val callerAppId = UserHandle.getAppId(Binder.getCallingUid())
-              val myAppId = UserHandle.getAppId(Process.myUid())
-              check(callerAppId == myAppId) { "Caller no autorizado" }
-          }
-          '''
-          new = '''    private fun enforceEscudoCaller() {
+          begin = s.index("    private fun enforceEscudoCaller() {")
+          finish = s.index("\n    private fun scheduleStop()", begin)
+          replacement = """    private fun enforceEscudoCaller() {
               val callerPackages = packageManager.getPackagesForUid(Binder.getCallingUid()).orEmpty()
               check(packageName in callerPackages) { "Caller no autorizado" }
           }
-          '''
-          assert old in s
-          bridge.write_text(s.replace(old, new))
+          """
+          s = s[:begin] + replacement + s[finish:]
+          bridge.write_text(s)
 
           provisioning = root / "app/src/main/java/com/escudo/app/policy/ProvisioningController.kt"
           s = provisioning.read_text()
-          old = '''    val isManagedProfile: Boolean
-              get() = Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && userManager.isManagedProfile
-          '''
-          new = '''    val isManagedProfile: Boolean
+          begin = s.index("    val isManagedProfile: Boolean")
+          finish = s.index("\n    val isProfileOwner: Boolean", begin)
+          replacement = """    val isManagedProfile: Boolean
               get() = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                   userManager.isManagedProfile
               } else {
                   isProfileOwner && !isDeviceOwner
               }
-          '''
-          assert old in s
-          provisioning.write_text(s.replace(old, new))
+          """
+          s = s[:begin] + replacement + s[finish:]
+          provisioning.write_text(s)
 
           check = root / "tools/security-regression-check.sh"
-          s = check.read_text()
-          old = """grep -q 'UserHandle.getAppId' "$BRIDGE_SERVICE" || fail "el Binder debe verificar el appId de Escudo en cada IPC" """
-          new = """grep -q 'getPackagesForUid(Binder.getCallingUid())' "$BRIDGE_SERVICE" || fail "el Binder debe verificar que cada IPC provenga del paquete Escudo" """
-          assert old.strip() in s
-          check.write_text(s.replace(old.strip(), new.strip()))
+          lines = check.read_text().splitlines()
+          dq = chr(34)
+          replacement_check = "grep -q 'getPackagesForUid(Binder.getCallingUid())' " + dq + "$BRIDGE_SERVICE" + dq + " || fail " + dq + "el Binder debe verificar que cada IPC provenga del paquete Escudo" + dq
+          lines = [
+              replacement_check
+              if "UserHandle.getAppId" in line and "$BRIDGE_SERVICE" in line
+              else line
+              for line in lines
+          ]
+          check.write_text("\n".join(lines) + "\n")
 
           wf = root / ".github/workflows/android.yml"
           wf.write_text(wf.read_text().replace("android-actions/setup-android@v3", "android-actions/setup-android@v4"))
+
+          assert "UserHandle.getAppId" not in bridge.read_text()
+          assert "getPackagesForUid(Binder.getCallingUid())" in bridge.read_text()
+          assert "Build.VERSION_CODES.R" in provisioning.read_text()
           PY
 
       - uses: actions/setup-java@v4
