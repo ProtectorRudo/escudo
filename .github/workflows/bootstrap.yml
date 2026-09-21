@@ -58,7 +58,8 @@ jobs:
 
           check = root / "tools/security-regression-check.sh"
           lines = check.read_text().splitlines()
-          replacement_check = """grep -q 'getPackagesForUid(Binder.getCallingUid())' "$BRIDGE_SERVICE" || fail "el Binder debe verificar que cada IPC provenga del paquete Escudo""""
+          dq = chr(34)
+          replacement_check = "grep -q 'getPackagesForUid(Binder.getCallingUid())' " + dq + "$BRIDGE_SERVICE" + dq + " || fail " + dq + "el Binder debe verificar que cada IPC provenga del paquete Escudo" + dq
           lines = [
               replacement_check
               if "UserHandle.getAppId" in line and "$BRIDGE_SERVICE" in line
