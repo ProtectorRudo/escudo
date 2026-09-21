@@ -36,14 +36,20 @@ jobs:
           set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
+
           root = Path("/tmp/escudo-source")
           bridge = root / "app/src/main/java/com/escudo/app/clone/CloneBridgeService.kt"
           text = bridge.read_text()
-          text = text.replace("import android.os.Process\\n", "").replace("import android.os.UserHandle\\n", "")
-          text = text.replace(
-              '''    private fun enforceEscudoCaller() {\\n        val callerAppId = UserHandle.getAppId(Binder.getCallingUid())\\n        val myAppId = UserHandle.getAppId(Process.myUid())\\n        check(callerAppId == myAppId) { "Caller no autorizado" }\\n    }\\n''',
-              '''    private fun enforceEscudoCaller() {\\n        val callerPackages = packageManager.getPackagesForUid(Binder.getCallingUid()).orEmpty()\\n        check(packageName in callerPackages) { "Caller no autorizado" }\\n    }\\n'''
-          )
+          text = text.replace("import android.os.Process\n", "")
+          text = text.replace("import android.os.UserHandle\n", "")
+          begin = text.index("    private fun enforceEscudoCaller() {")
+          finish = text.index("\n    private fun scheduleStop()", begin)
+          replacement = """    private fun enforceEscudoCaller() {
+              val callerPackages = packageManager.getPackagesForUid(Binder.getCallingUid()).orEmpty()
+              check(packageName in callerPackages) { "Caller no autorizado" }
+          }
+          """
+          text = text[:begin] + replacement + text[finish:]
           text = text.replace(
               "the calling appId matches Escudo's appId, so possession of the Binder alone is not enough for an",
               "the calling UID resolves to Escudo's package, so possession of the Binder alone is not enough for an"
@@ -51,14 +57,25 @@ jobs:
           bridge.write_text(text)
 
           check = root / "tools/security-regression-check.sh"
-          text = check.read_text().replace(
-              "grep -q 'UserHandle.getAppId' \\\"$BRIDGE_SERVICE\\\" || fail \\\"el Binder debe verificar el appId de Escudo en cada IPC\\\"",
-              "grep -q 'getPackagesForUid(Binder.getCallingUid())' \\\"$BRIDGE_SERVICE\\\" || fail \\\"el Binder debe verificar que cada IPC provenga del paquete Escudo\\\""
-          )
-          check.write_text(text)
+          lines = check.read_text().splitlines()
+          lines = [
+              """grep -q 'getPackagesForUid(Binder.getCallingUid())' "$BRIDGE_SERVICE" || fail "el Binder debe verificar que cada IPC provenga del paquete Escudo""""
+              if "UserHandle.getAppId" in line and "$BRIDGE_SERVICE" in line
+              else line
+              for line in lines
+          ]
+          check.write_text("\n".join(lines) + "\n")
 
           android_ci = root / ".github/workflows/android.yml"
-          android_ci.write_text(android_ci.read_text().replace("android-actions/setup-android@v3", "android-actions/setup-android@v4"))
+          android_ci.write_text(
+              android_ci.read_text().replace(
+                  "android-actions/setup-android@v3",
+                  "android-actions/setup-android@v4"
+              )
+          )
+
+          assert "UserHandle.getAppId" not in bridge.read_text()
+          assert "getPackagesForUid(Binder.getCallingUid())" in bridge.read_text()
           PY
 
       - uses: actions/setup-java@v4
